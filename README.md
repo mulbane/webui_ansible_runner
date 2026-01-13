@@ -4,7 +4,6 @@ A lightweight **FastAPI + Ansible** application that provides a simple web inter
 
 This repository currently implements a **Reserved Instance validation and setup workflow**, but the overall structure is intentionally generic. The same backend and frontend pattern can be adapted to run **any Ansible playbook** as long as the required variables are surfaced in the UI and handled by the API.
 
----
 
 ## Features
 
@@ -21,7 +20,6 @@ This repository currently implements a **Reserved Instance validation and setup 
   - Docker (single container, no external mounts)
   - Kubernetes (for internal usage only; not safe for public exposure)
 
----
 
 ## Current Implementation: Reserved Instance Validator
 
@@ -37,7 +35,6 @@ The included Ansible playbook performs validation and preparation of reserved in
 
 This workflow serves as a **reference example**, not a limitation of the runner itself.
 
----
 
 ## Directory Structure
 
@@ -58,7 +55,6 @@ ansible-runner/
 │   └── validation_results.zip
 ```
 
----
 
 ## Usage
 
@@ -75,7 +71,6 @@ Open in your browser:
 http://localhost:8080
 ```
 
----
 
 ## Form Fields (Current Workflow)
 
@@ -90,7 +85,6 @@ http://localhost:8080
 | New User        | User account to create on each target                         |
 | Client Name     | Optional identifier used for log and ZIP naming               |
 
----
 
 ## Output
 
@@ -114,7 +108,6 @@ A download link also appears in the web UI once execution completes, displayed a
 ::DOWNLOAD:: <client>_validation_results_<timestamp>
 ```
 
----
 
 ## Extending the Runner with New Playbooks
 
@@ -131,7 +124,6 @@ At a high level:
 
 As long as the **frontend fields, backend handling, and Ansible variables remain aligned**, the runner can execute different automation workflows without changing its overall structure.
 
----
 
 ## Walkthrough: Adding a New Playbook
 
@@ -156,7 +148,6 @@ Example playbook:
         msg: "Deploying {{ app_name }} version {{ app_version }} to {{ environment }}"
 ```
 
----
 
 ### Step 2: Update the backend
 
@@ -178,7 +169,6 @@ Execute:
 ansible-playbook ansible/deploy_app.yml --extra-vars "<serialized vars>"
 ```
 
----
 
 ### Step 3: Update the frontend
 
@@ -198,7 +188,6 @@ Add corresponding fields to the HTML form:
 </select>
 ```
 
----
 
 ### Step 4: Keep the contract aligned
 
@@ -206,7 +195,6 @@ Add corresponding fields to the HTML form:
 
 If they are aligned, the underlying automation can change freely.
 
----
 
 ## Kubernetes Support
 
@@ -219,7 +207,6 @@ Ensure that:
 - The service is not exposed publicly
 - SSH keys and sensitive inputs are handled carefully
 
----
 
 ## Notes
 
@@ -227,7 +214,6 @@ Ensure that:
 - There is no authentication layer by default
 - Treat this as an internal automation tool
 
----
 
 ## Future Improvements (Optional)
 
