@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ansible-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ansible-runner
+  template:
+    metadata:
+      labels:
+        app: ansible-runner
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      nodeSelector:
+        ansible: ansible-runner
+
+      containers:
+        - name: runner
+          image: docker.whyareyouwrong.com/ansible-runner-ui:latest
+          ports:
+            - containerPort: 8080
+
+          env:
+            - name: ANSIBLE_HOST_KEY_CHECKING
+              value: "False"
+
+          volumeMounts:
+            # Read-only private key
+            - name: ssh-private-key
+              mountPath: /home/appuser/.ssh/id_ansible_runner
+              readOnly: false
+
+            # Writable SSH folder (for authorized_keys)
+            - name: ssh-dir
+              mountPath: /home/appuser/.ssh
+              readOnly: false
+
+            # Log directory
+            - name: logs
+              mountPath: /app/logs
+            - name: ansible-logs
+              mountPath: /mnt/ansible_logs
+
+      volumes:
+        - name: ssh-private-key
+          hostPath:
+            path: /mnt/storage/ansible-keys/id_ansible_runner
+            type: File
+
+        - name: ssh-dir
+          hostPath:
+            path: /mnt/storage/ansible-runner-ssh
+            type: DirectoryOrCreate
+
+        - name: logs
+          hostPath:
+            path: /mnt/storage/ansible-runner-logs
+            type: DirectoryOrCreate
+
+        - name: ansible-logs
+          hostPath:
+            path: /mnt/storage/ansible_logs
+            type: DirectoryOrCreate
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ansible-runner
+spec:
+  type: NodePort
+  selector:
+    app: ansible-runner
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      nodePort: 30080

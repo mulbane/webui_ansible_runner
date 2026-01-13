@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Reserved Instance Validator</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 1rem;
+            background: #f4f4f4;
+        }
+        textarea, input, button {
+            width: 100%;
+            margin: 0.5rem 0;
+        }
+        #output {
+            white-space: pre-wrap;
+            background: #111;
+            color: #0f0;
+            padding: 1rem;
+            border-radius: 6px;
+            height: 400px;
+            overflow-y: scroll;
+        }
+        .download-link {
+            margin-top: 1rem;
+            font-weight: bold;
+        }
+        .masked {
+            -webkit-text-security: disc;
+            text-security: disc;
+        }
+    </style>
+</head>
+<body>
+<h1>Reserved Instance Validator</h1>
+<form id="runner-form">
+    <label>Target IPs (one per line):</label>
+    <textarea name="target_ips" rows="4" required></textarea>
+
+    <label>Remote SSH Username:</label>
+    <input type="text" name="ansible_user" value="root" required>
+
+    <label>SSH Public Keys (authorized_keys format):</label>
+    <textarea name="ssh_keys" rows="4" required></textarea>
+
+    <label>Encrypted Private Key (PEM format):</label>
+    <textarea name="private_key" rows="8" required class="masked"></textarea>
+
+    <label>Passphrase for Private Key:</label>
+    <input type="password" name="passphrase" required>
+
+    <label>New Hostname:</label>
+    <input type="text" name="new_hostname" required>
+
+    <label>New Username:</label>
+    <input type="text" name="new_user" required>
+
+    <label>Client (for tagging results):</label>
+    <input type="text" name="client">
+
+    <button type="submit">Run Validation</button>
+</form>
+
+<h2>Output</h2>
+<div id="output"></div>
+<div id="download-link" class="download-link"></div>
+
+<script>
+    const form = document.getElementById('runner-form');
+    const output = document.getElementById('output');
+    const downloadDiv = document.getElementById('download-link');
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        output.textContent = 'Running validation...\n';
+        downloadDiv.innerHTML = '';
+
+        const formData = new FormData(form);
+        const res = await fetch('/run-stream', {
+            method: 'POST',
+            body: formData
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Parse line by line
+            let lines = buffer.split('\n');
+            buffer = lines.pop(); // Keep partial line
+            lines.forEach(line => {
+                output.textContent += line + '\n';
+                output.scrollTop = output.scrollHeight;
+
+                if (line.startsWith('::DOWNLOAD::')) {
+                    const jobId = line.split('::DOWNLOAD::')[1].trim();
+                    const url = `/download/${jobId}`;
+                    downloadDiv.innerHTML = `<a href="${url}" target="_blank">📦 Download validation ZIP</a>`;
+                }
+            });
+        }
+    });
+</script>
+</body>
+</html>

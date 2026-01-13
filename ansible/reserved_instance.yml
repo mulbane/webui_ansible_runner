@@ -1,0 +1,162 @@
+---
+- name: Prepare Reserved Instance (variable-driven setup)
+  hosts: all
+  become: yes
+
+  vars:
+    new_user: ubuntu
+    new_hostname: node
+    ssh_pubkeys: []
+    validation_output_dir: /tmp/validation_results
+
+  tasks:
+    - name: Ensure '{{ new_user }}' user exists
+      ansible.builtin.user:
+        name: "{{ new_user }}"
+        shell: /bin/bash
+        groups: sudo
+        create_home: yes
+        state: present
+
+    - name: Ensure passwordless sudo for sudo group
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        regexp: '^%sudo'
+        line: '%sudo    ALL=(ALL:ALL) NOPASSWD:ALL'
+        validate: 'visudo -cf %s'
+
+    - name: Ensure home directory is accessible
+      ansible.builtin.file:
+        path: "/home/{{ new_user }}"
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        mode: '0755'
+
+    - name: Create .ssh directory
+      ansible.builtin.file:
+        path: "/home/{{ new_user }}/.ssh"
+        state: directory
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        mode: '0700'
+
+    - name: Show SSH pubkeys type and content
+      debug:
+        msg: "Type={{ ssh_pubkeys | type_debug }}, Value={{ ssh_pubkeys }}"
+
+    - name: Add SSH public keys
+      ansible.builtin.copy:
+        content: "{{ ssh_pubkeys }}"
+        dest: "/home/{{ new_user }}/.ssh/authorized_keys"
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        mode: '0600'
+
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: "{{ new_hostname }}"
+
+    - name: Update /etc/hosts entry
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\\.0\\.1\\.1\\s+'
+        line: "127.0.1.1 {{ new_hostname }}"
+
+    - name: Ensure fallback DNS
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 1.1.1.1
+          nameserver 8.8.8.8
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Run validation checks
+      block:
+        - name: Check OS Version
+          command: lsb_release -a
+          register: os_version
+          ignore_errors: true
+
+        - name: Check CPU Info
+          command: lscpu
+          register: cpu_info
+
+        - name: Check RAM Info
+          command: free -gh
+          register: ram_info
+
+        - name: Check Disk Info
+          command: df -h
+          register: df_info
+
+        - name: Check Block Devices
+          command: lsblk
+          register: lsblk_info
+
+        - name: Check GPU Info
+          command: nvidia-smi
+          register: gpu_info
+          ignore_errors: true
+
+        - name: Check Infiniband Status
+          command: ibstat
+          register: ib_info
+          ignore_errors: true
+
+    - name: Ensure validation output directory exists
+      file:
+        path: "{{ validation_output_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Save validation summary
+      copy:
+        dest: "{{ validation_output_dir }}/validation_summary_{{ ansible_default_ipv4.address }}.txt"
+        content: |
+          Validation Summary for {{ ansible_default_ipv4.address }}
+
+          {% if os_version is defined %}OS Version:
+          ----------------------
+          {{ os_version.stdout }}
+
+          {% endif %}{% if cpu_info is defined %}CPU Info:
+          ----------------------
+          {{ cpu_info.stdout }}
+
+          {% endif %}{% if ram_info is defined %}RAM Info:
+          ----------------------
+          {{ ram_info.stdout }}
+
+          {% endif %}{% if df_info is defined %}Disk Usage (df -h):
+          ----------------------
+          {{ df_info.stdout }}
+
+          {% endif %}{% if lsblk_info is defined %}Block Devices (lsblk):
+          ----------------------
+          {{ lsblk_info.stdout }}
+
+          {% endif %}{% if gpu_info is defined %}GPU Info (nvidia-smi):
+          ----------------------
+          {{ gpu_info.stdout | default('Not available') }}
+
+          {% endif %}{% if ib_info is defined %}Infiniband (ibstat):
+          ----------------------
+          {{ ib_info.stdout | default('Not available') }}
+          {% endif %}
+
+    - name: Ensure job log directory exists
+      delegate_to: localhost
+      become: false
+      file:
+        path: "/app/logs/{{ job_id }}"
+        state: directory
+        mode: '0755'
+
+    - name: Fetch validation summary to controller logs folder
+      ansible.builtin.fetch:
+        src: "{{ validation_output_dir }}/validation_summary_{{ ansible_default_ipv4.address }}.txt"
+        dest: "/app/logs/{{ job_id }}/"
+        flat: yes
+      become: false
