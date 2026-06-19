@@ -1,39 +1,39 @@
 # Ansible Runner (Example: Reserved Instance Validator)
 
-A lightweight **FastAPI + Ansible** application that provides a simple web interface for running Ansible automation over SSH.
+A lightweight **FastAPI + Ansible** application that provides a web interface for running Ansible playbooks over SSH — no AWX, no Tower, no agent installation on target hosts.
 
-This repository currently implements a **Reserved Instance validation and setup workflow**, but the overall structure is intentionally generic. The same backend and frontend pattern can be adapted to run **any Ansible playbook** as long as the required variables are surfaced in the UI and handled by the API.
+You submit a form, the backend decrypts your SSH key, generates an inventory, and streams `ansible-playbook` output back to your browser in real time. When the run finishes, logs are zipped and a download link appears automatically.
+
+This repository ships a **Reserved Instance validation and setup workflow** as the built-in example, but the runner is intentionally generic. Any playbook can be wired in by aligning three things: the HTML form fields, the FastAPI parameters, and the Ansible `extra_vars`.
 
 
-## Features
+## How It Works
 
-- Web-based form to trigger Ansible runs
-- Supports:
-  - Multiple target IPs (line-delimited)
-  - SSH authentication using an encrypted private key + passphrase
-  - Installation of one or more SSH public keys
-  - Hostname and user creation on remote systems
-- Executes Ansible inside the container
-- Collects per-run logs and summaries
-- Packages results into a downloadable ZIP
-- Fully functional in:
-  - Docker (single container, no external mounts)
-  - Kubernetes (for internal usage only; not safe for public exposure)
+When you submit the form, the backend runs through this sequence:
+
+1. **Key decryption** — The encrypted private key is written to disk and decrypted in-place with `ssh-keygen -p`. A wrong passphrase stops the run immediately with an error. The encrypted copy is deleted after the run completes.
+
+2. **Inventory generation** — A fresh `ansible/inventory.ini` is written for this run, one line per target IP, embedding the SSH username and key path.
+
+3. **Streaming execution** — `ansible-playbook` runs as a subprocess. Its stdout is piped line-by-line into a `StreamingResponse`, so you see Ansible task output in real time rather than waiting for a single response at the end.
+
+4. **Result packaging** — After the playbook exits, the per-run log directory is zipped. The backend emits a `::DOWNLOAD:: <job_id>` sentinel line into the stream. The frontend detects this, parses the job ID, and renders a download link — no polling required.
+
+5. **Download** — `GET /download/<job_id>` serves the ZIP directly from the container filesystem.
 
 
 ## Current Implementation: Reserved Instance Validator
 
-The included Ansible playbook performs validation and preparation of reserved instances over SSH, including:
+The included playbook (`ansible/reserved_instance.yml`) does the following on each target host in order:
 
-- Connecting to each target host
-- Creating a new user
-- Installing provided SSH public keys
-- Setting the hostname
-- Running validation checks
-- Capturing logs per host
-- Generating a ZIP archive of results per session
+1. Creates the new user, adds them to `sudo`, grants passwordless sudo
+2. Writes `authorized_keys` with the public keys you provided
+3. Sets the system hostname and updates `/etc/hosts`
+4. Writes a DNS fallback (`1.1.1.1` / `8.8.8.8`) to `/etc/resolv.conf`
+5. Captures hardware info: `lsb_release`, `lscpu`, `free`, `df`, `lsblk`, `nvidia-smi`, `ibstat` (GPU and Infiniband use `ignore_errors: true`)
+6. Writes a per-host summary to the remote, then `fetch`es it back to `/app/logs/<job_id>/` — named by IP so multiple targets don't overwrite each other
 
-This workflow serves as a **reference example**, not a limitation of the runner itself.
+This workflow is the **reference example**, not a limitation of the runner.
 
 
 ## Directory Structure
@@ -88,53 +88,34 @@ http://localhost:8080
 
 ## Output
 
-After submitting the form:
-
-- Logs and summaries are written to:
+Logs are written inside the container to:
 
 ```
 /app/logs/<client>_validation_results_<timestamp>/
 ```
 
-- A ZIP archive containing all results is generated and made available at:
+Once zipped, the archive is available at:
 
 ```
-/download/<client>_validation_results_<timestamp>
+GET /download/<client>_validation_results_<timestamp>
 ```
 
-A download link also appears in the web UI once execution completes, displayed as:
-
-```
-::DOWNLOAD:: <client>_validation_results_<timestamp>
-```
+The `::DOWNLOAD::` line that triggers the frontend link is a sentinel written by the backend after archiving — it's not part of Ansible's output.
 
 
 ## Extending the Runner with New Playbooks
 
-This application is designed so that new Ansible workflows can be added with minimal changes.
-
-At a high level:
-
-1. Add or replace a playbook under `ansible/`
-2. Update the backend to:
-   - accept the required inputs
-   - validate them
-   - pass them as Ansible variables (e.g. `--extra-vars`)
-3. Update the frontend form to collect those inputs
-
-As long as the **frontend fields, backend handling, and Ansible variables remain aligned**, the runner can execute different automation workflows without changing its overall structure.
-
-
-## Walkthrough: Adding a New Playbook
-
-### Step 1: Add the playbook
+The runner has a three-layer contract that must stay aligned:
 
 ```
-ansible/
-└── deploy_app.yml
+HTML form fields  →  FastAPI Form() params  →  Ansible extra_vars
 ```
 
-Example playbook:
+If you add a field to the form but not the backend, it gets silently dropped. If you add a backend param but not the Ansible variable, the playbook uses its declared default. When all three are aligned, the runner infrastructure (streaming, key handling, inventory, ZIP packaging) doesn't change — only the playbook does.
+
+### Walkthrough
+
+**Step 1: Add the playbook** under `ansible/`, with `vars:` defaults for anything the backend will pass:
 
 ```yaml
 - hosts: all
@@ -148,31 +129,19 @@ Example playbook:
         msg: "Deploying {{ app_name }} version {{ app_version }} to {{ environment }}"
 ```
 
-
-### Step 2: Update the backend
-
-Extend the API to accept the required inputs and map them to Ansible variables.
-
-Conceptual example:
+**Step 2: Update `app/main.py`** — add `Form(...)` parameters to `run_stream()`, populate `extra_vars`, and point the command at the new playbook:
 
 ```python
 extra_vars = {
-  "app_name": request.app_name,
-  "app_version": request.app_version,
-  "environment": request.environment,
+    "app_name": app_name,
+    "app_version": app_version,
+    "environment": environment,
 }
+cmd = ["ansible-playbook", "/app/ansible/deploy_app.yml", "-i", inventory_path,
+       "--extra-vars", json.dumps(extra_vars)]
 ```
 
-Execute:
-
-```
-ansible-playbook ansible/deploy_app.yml --extra-vars "<serialized vars>"
-```
-
-
-### Step 3: Update the frontend
-
-Add corresponding fields to the HTML form:
+**Step 3: Update `static/index.html`** — add matching fields with the same `name` attributes:
 
 ```html
 <label>App Name</label>
@@ -189,13 +158,6 @@ Add corresponding fields to the HTML form:
 ```
 
 
-### Step 4: Keep the contract aligned
-
-> Frontend inputs → backend validation → Ansible variables must remain aligned.
-
-If they are aligned, the underlying automation can change freely.
-
-
 ## Kubernetes Support
 
 This application can be deployed into a Kubernetes cluster for **internal tooling**.
@@ -210,15 +172,7 @@ Ensure that:
 
 ## Notes
 
-- This is not intended to replace AWX/Tower
-- There is no authentication layer by default
-- Treat this as an internal automation tool
-
-
-## Future Improvements (Optional)
-
-- Multiple selectable playbooks/actions
-- Per-playbook input schemas
-- Live log streaming
-- Authentication and access controls
-- Run history and auditing
+- No authentication layer — treat this as an internal tool only
+- `inventory.ini` is a shared file; concurrent form submissions would overwrite each other
+- SSH keys are written to disk during the run and deleted after, but not zero-wiped
+- Not intended to replace AWX/Tower
