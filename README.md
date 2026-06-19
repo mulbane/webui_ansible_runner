@@ -31,7 +31,7 @@ The included playbook (`ansible/reserved_instance.yml`) does the following on ea
 3. Sets the system hostname and updates `/etc/hosts`
 4. Writes a DNS fallback (`1.1.1.1` / `8.8.8.8`) to `/etc/resolv.conf`
 5. Captures hardware info: `lsb_release`, `lscpu`, `free`, `df`, `lsblk`, `nvidia-smi`, `ibstat` (GPU and Infiniband use `ignore_errors: true`)
-6. Writes a per-host summary to the remote, then `fetch`es it back to `/app/logs/<job_id>/` — named by IP so multiple targets don't overwrite each other
+6. Writes a per-host summary to the remote, then `fetch`'es it back to `/app/logs/<job_id>/` — named by IP so multiple targets don't overwrite each other
 
 This workflow is the **reference example**, not a limitation of the runner.
 
